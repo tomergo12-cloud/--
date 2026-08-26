@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+pronear.db
+pronear.db-wal
+pronear.db-shm
+.DS_Store
