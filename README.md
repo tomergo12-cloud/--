@@ -23,12 +23,18 @@ python -m pronear.server
 
 אם הוא חסר, השרת נעצר מיד עם הסבר איך לתקן — במקום להיכשל בבקשת החיפוש הראשונה.
 
-התחברות לדוגמה: `demo@pronear.demo` / `demo12345` (גם כל `proN@pronear.demo`, אותה סיסמה).
+חשבונות לדוגמה:
+
+| תפקיד | אימייל | סיסמה |
+|---|---|---|
+| לקוח | `demo@pronear.demo` | `demo12345` |
+| איש מקצוע | `pro1@pronear.demo` (עד `pro48`) | `demo12345` |
+| מנהל | `admin@pronear.demo` | `admin12345` |
 
 בדיקות:
 
 ```bash
-python3 -m unittest discover -s tests -t .    # 113 בדיקות
+python3 -m unittest discover -s tests -t .    # 141 בדיקות
 ```
 
 ## מה המערכת עושה
@@ -42,6 +48,41 @@ python3 -m unittest discover -s tests -t .    # 113 בדיקות
 | הזמנות | בחירת סלוט → בקשה → אישור/דחייה של איש המקצוע → סיום → ביקורת |
 | הגנה על פרטיות | טלפון נחשף רק אחרי הזמנה מאושרת |
 | אזור אישי | פרופיל, עורך לוח שבועי, חסימות זמן (חופשה/מילואים) |
+| שלושה תפקידים | לקוח מזמין · איש מקצוע מנהל זמינות · מנהל רואה ומנהל הכול |
+| פאנל ניהול | סטטיסטיקות, עריכת פרופילים, אימות, השבתה, חסימת משתמשים ומחיקת ביקורות |
+| תמונות | כרטיס צבעוני שנוצר בקוד לפי המקצוע, או תמונה שאיש המקצוע מעלה |
+
+## תפקידים והרשאות
+
+| תפקיד | מה הוא רואה | איך נוצר |
+|---|---|---|
+| `client` | חיפוש, הזמנות, ביקורות | הרשמה מהאתר |
+| `pro` | כל מה שלקוח רואה + אזור אישי (לוח זמינות, בקשות) | הרשמה כאיש מקצוע, או יצירת פרופיל מקצועי |
+| `admin` | פאנל ניהול מלא | `seed.py` או `services.create_admin()` בלבד |
+
+בחירת הלשונית במסך הכניסה היא נוחות בלבד — **ההרשאות נקבעות בשרת לפי התפקיד השמור במסד**.
+מי שינסה להיכנס בלשונית "מנהל" עם חשבון לקוח ייכנס כלקוח, וכל מסלולי `/api/admin/*` יחזירו 403.
+חסימת משתמש מנתקת מיד את כל הסשנים הפעילים שלו.
+
+## מפות
+
+ברירת המחדל היא מפת SVG מקומית שלא שולחת את מיקום המשתמש לשום שירות חיצוני.
+כדי לקבל מפת Google מלאה עם חיפוש כתובות:
+
+1. ב-[Google Cloud Console](https://console.cloud.google.com/): צרו פרויקט, הפעילו
+   **Maps JavaScript API** ו-**Places API**, וצרו מפתח ב-Credentials.
+2. הגבילו את המפתח (מומלץ): HTTP referrers → `http://localhost:8000/*`.
+3. הריצו עם המפתח:
+
+```bash
+# Windows
+set PRONEAR_MAPS_KEY=המפתח_שלך && python -m pronear.server
+# mac/Linux
+PRONEAR_MAPS_KEY=המפתח_שלך python3 -m pronear.server
+```
+
+אם המפתח חסר, שגוי, או שהטעינה נכשלה — הממשק נופל אוטומטית חזרה למפה המקומית ומסביר זאת
+למשתמש, במקום להציג ריבוע ריק.
 
 ## ארכיטקטורה
 
@@ -53,10 +94,14 @@ pronear/
   matching.py      פונקציות הציון והמשקלים
   services.py      לוגיקה עסקית: משתמשים, פרופילים, חיפוש, הזמנות, ביקורות
   api.py           ניתוב REST (דקורטור @route)
+  uploads.py       קליטת תמונות: ולידציה לפי חתימת הקובץ, שמירה לפי גיבוב תוכן
   server.py        שרת HTTP + הגשת קבצים סטטיים
   db.py/schema.sql SQLite: סכימה, טרנזקציות, חיבור פר-thread
-web/               ממשק SPA בעברית (RTL), כולל מפת SVG מקומית ללא שירות חיצוני
-tests/             113 בדיקות יחידה ואינטגרציה
+web/               ממשק SPA בעברית (RTL)
+  icons.js         אייקוני קטגוריה ותמונות פרופיל שנוצרות בקוד
+  map.js           שכבת מפה: Google Maps עם נפילה חזרה למפה מקומית
+  app.js           מסכים: כניסה לפי תפקיד, חיפוש, הזמנות, אזור אישי, ניהול
+tests/             141 בדיקות יחידה ואינטגרציה
 ```
 
 ### איך מחושב ציון ההתאמה
@@ -89,6 +134,12 @@ score = 36% זמינות + 26% קרבה + 22% דירוג + 10% מחיר + 6% א�
 | POST/GET | `/api/bookings` | יצירה ורשימה |
 | POST | `/api/bookings/{id}/status` | `confirmed\|declined\|done\|cancelled` לפי הרשאות |
 | POST | `/api/bookings/{id}/review` | דירוג 1–5 אחרי סיום |
+| POST/DELETE | `/api/pros/{id}/photo` | העלאת תמונת פרופיל (data URL) או הסרתה |
+| GET | `/api/admin/stats` | מדדי מערכת (מנהל בלבד) |
+| GET/PATCH/DELETE | `/api/admin/pros[/{id}]` | רשימה, עריכה ומחיקה של אנשי מקצוע |
+| GET | `/api/admin/users` · POST `/{id}/blocked` | משתמשים וחסימתם |
+| GET | `/api/admin/bookings` · `/api/admin/reviews` | כל ההזמנות והביקורות |
+| DELETE | `/api/admin/reviews/{id}` | מחיקת ביקורת פוגענית |
 
 דוגמה:
 
@@ -111,4 +162,5 @@ curl "http://127.0.0.1:8000/api/search?lat=32.0853&lng=34.7818&radius_km=10&avai
 
 ## משתני סביבה
 
-`PRONEAR_DB`, `PRONEAR_HOST`, `PRONEAR_PORT`, `PRONEAR_TZ`, `PRONEAR_DEFAULT_LAT`, `PRONEAR_DEFAULT_LNG`
+`PRONEAR_DB`, `PRONEAR_HOST`, `PRONEAR_PORT`, `PRONEAR_TZ`, `PRONEAR_DEFAULT_LAT`,
+`PRONEAR_DEFAULT_LNG`, `PRONEAR_MAPS_KEY`

@@ -180,12 +180,19 @@ def build(count: int = 48) -> None:
                        (pro["id"], start, start + random.choice([4, 8, 24, 48]) * tu.HOUR, "לא זמין"))
         made += 1
 
-    # משתמש לקוח לדמו
+    # חשבונות לדמו: לקוח ומנהל מערכת
     try:
         services.register_user("לקוח לדוגמה", "demo@pronear.demo", "demo12345", "050-1234567")
     except services.AppError:
         pass
-    print(f"נוצרו {made} אנשי מקצוע. התחברות לדוגמה: demo@pronear.demo / demo12345")
+    try:
+        services.create_admin("מנהל המערכת", "admin@pronear.demo", "admin12345", "050-7654321")
+    except services.AppError:
+        pass
+    print(f"נוצרו {made} אנשי מקצוע.")
+    print("  לקוח:       demo@pronear.demo  / demo12345")
+    print("  איש מקצוע:  pro1@pronear.demo  / demo12345")
+    print("  מנהל:       admin@pronear.demo / admin12345")
 
 
 _clients: list[int] = []
