@@ -9,7 +9,7 @@ import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import api, config, db
+from . import api, config, db, timeutil as tu
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
 MAX_BODY = 1 << 20  # 1MB
@@ -88,9 +88,18 @@ class RequestHandler(BaseHTTPRequestHandler):
         sys.stderr.write("%s - %s\n" % (self.log_date_time_string(), fmt % args))
 
 
+def preflight() -> None:
+    """בדיקות התקנה שעדיף להיכשל עליהן מיד, ולא בבקשה הראשונה של המשתמש."""
+    try:
+        tu.ensure_timezone()
+    except tu.TimezoneUnavailable as exc:
+        sys.exit(f"\nלא ניתן להפעיל את ProNear:\n{exc}\n")
+
+
 def serve(host: str = None, port: int = None):
     host = host or config.HOST
     port = port or config.PORT
+    preflight()
     db.init_db()
     httpd = ThreadingHTTPServer((host, port), RequestHandler)
     httpd.daemon_threads = True

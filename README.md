@@ -10,12 +10,25 @@ python3 seed.py --reset        # יצירת נתוני דמו (48 אנשי מק�
 python3 -m pronear.server      # http://127.0.0.1:8000
 ```
 
+### Windows
+
+לפייתון על Windows אין מסד נתוני אזורי זמן מובנה, ובלעדיו מנוע הזמינות לא יכול לחשב
+שעות מקומיות. התקנה חד-פעמית:
+
+```powershell
+pip install -r requirements.txt    # מתקין tzdata
+python seed.py --reset
+python -m pronear.server
+```
+
+אם הוא חסר, השרת נעצר מיד עם הסבר איך לתקן — במקום להיכשל בבקשת החיפוש הראשונה.
+
 התחברות לדוגמה: `demo@pronear.demo` / `demo12345` (גם כל `proN@pronear.demo`, אותה סיסמה).
 
 בדיקות:
 
 ```bash
-python3 -m unittest discover -s tests -t .    # 102 בדיקות
+python3 -m unittest discover -s tests -t .    # 113 בדיקות
 ```
 
 ## מה המערכת עושה
@@ -43,7 +56,7 @@ pronear/
   server.py        שרת HTTP + הגשת קבצים סטטיים
   db.py/schema.sql SQLite: סכימה, טרנזקציות, חיבור פר-thread
 web/               ממשק SPA בעברית (RTL), כולל מפת SVG מקומית ללא שירות חיצוני
-tests/             102 בדיקות יחידה ואינטגרציה
+tests/             113 בדיקות יחידה ואינטגרציה
 ```
 
 ### איך מחושב ציון ההתאמה

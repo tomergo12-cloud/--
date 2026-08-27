@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import os
 import random
+import sys
 
 from pronear import config, db, services, timeutil as tu
 
@@ -122,6 +123,10 @@ def random_schedule() -> list[dict]:
 
 
 def build(count: int = 48) -> None:
+    try:
+        tu.ensure_timezone()
+    except tu.TimezoneUnavailable as exc:
+        sys.exit(f"\nלא ניתן ליצור נתוני דמו:\n{exc}\n")
     db.init_db()
     if db.query_one("SELECT id FROM professionals LIMIT 1"):
         print("במסד כבר יש נתונים. הרץ עם --reset כדי לבנות מחדש.")

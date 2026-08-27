@@ -5,9 +5,26 @@ from __future__ import annotations
 import datetime as dt
 import re
 from typing import Optional
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from . import config
+
+TZ_HELP = (
+    "אזור הזמן '{zone}' לא נמצא במערכת.\n"
+    "ב-Windows אין מסד נתוני אזורי זמן מובנה לפייתון — התקן אותו:\n"
+    "    pip install tzdata\n"
+    "לחלופין אפשר לבחור אזור זמן אחר במשתנה הסביבה PRONEAR_TZ."
+)
+
+
+class TimezoneUnavailable(RuntimeError):
+    """מסד נתוני אזורי הזמן חסר - שגיאת התקנה, לא שגיאת נתונים."""
+
+    def __init__(self, zone: str):
+        super().__init__(TZ_HELP.format(zone=zone))
+        self.zone = zone
+
+_TZ_CACHE: dict[str, ZoneInfo] = {}
 
 MINUTE = 60
 HOUR = 3600
@@ -15,7 +32,20 @@ DAY = 86400
 
 
 def tz() -> ZoneInfo:
-    return ZoneInfo(config.TIMEZONE)
+    zone = config.TIMEZONE
+    cached = _TZ_CACHE.get(zone)
+    if cached is None:
+        try:
+            cached = ZoneInfo(zone)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise TimezoneUnavailable(zone) from exc
+        _TZ_CACHE[zone] = cached
+    return cached
+
+
+def ensure_timezone() -> None:
+    """בדיקת התקנה שרצה בעליית השרת ולפני יצירת נתוני דמו."""
+    tz()
 
 
 def now_ts() -> int:
