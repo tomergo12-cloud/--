@@ -4,3 +4,4 @@ pronear.db
 pronear.db-wal
 pronear.db-shm
 .DS_Store
+data/uploads/

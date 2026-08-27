@@ -7,8 +7,12 @@ CREATE TABLE IF NOT EXISTS users (
     email         TEXT    NOT NULL UNIQUE COLLATE NOCASE,
     phone         TEXT,
     password_hash TEXT    NOT NULL,
+    -- client = מזמין, pro = בעל פרופיל מקצועי, admin = ניהול המערכת
+    role          TEXT    NOT NULL DEFAULT 'client',
+    blocked       INTEGER NOT NULL DEFAULT 0,
     created_at    INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 
 CREATE TABLE IF NOT EXISTS sessions (
     token      TEXT PRIMARY KEY,
@@ -36,6 +40,7 @@ CREATE TABLE IF NOT EXISTS professionals (
     active           INTEGER NOT NULL DEFAULT 1,
     emergency        INTEGER NOT NULL DEFAULT 0,  -- זמין גם לקריאות דחופות מחוץ ללו"ז
     tags             TEXT    NOT NULL DEFAULT '',
+    photo            TEXT    NOT NULL DEFAULT '',  -- נתיב לתמונת פרופיל שהועלתה
     created_at       INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_pros_box ON professionals(active, lat, lng);

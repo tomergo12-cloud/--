@@ -69,6 +69,11 @@ class Request:
             raise AppError("נדרשת התחברות", status=401)
         return user
 
+    def require_admin(self) -> dict:
+        user = self.require_user()
+        services.require_admin(user)
+        return user
+
     def require_pro(self) -> tuple[dict, int]:
         user = self.require_user()
         pro_id = services.pro_id_of_user(user["id"])
@@ -132,13 +137,19 @@ def meta(req: Request):
         "weekdays": tu.WEEKDAY_NAMES,
         "default_location": {"lat": config.DEFAULT_LAT, "lng": config.DEFAULT_LNG},
         "default_radius_km": config.DEFAULT_RADIUS_KM,
+        # המפתח מיועד ל-Google Maps JS בדפדפן. ריק = הממשק נופל חזרה למפה המקומית.
+        "maps_key": config.MAPS_KEY,
+        "maps_provider": "google" if config.MAPS_KEY else "local",
     }
 
 
 @route("POST", "/api/auth/register")
 def register(req: Request):
     b = req.body
-    return 201, services.register_user(b.get("name"), b.get("email"), b.get("password"), b.get("phone", ""))
+    return 201, services.register_user(
+        b.get("name"), b.get("email"), b.get("password"), b.get("phone", ""),
+        role=(b.get("role") or "client"),
+    )
 
 
 @route("POST", "/api/auth/login")
@@ -289,3 +300,81 @@ def post_review(req: Request, booking_id: str):
     user = req.require_user()
     b = req.body
     return 201, services.add_review(user["id"], int(booking_id), b.get("rating"), b.get("comment", ""))
+
+
+# ---------------- תמונת פרופיל ----------------
+
+@route("POST", "/api/pros/{pro_id}/photo")
+def post_photo(req: Request, pro_id: str):
+    user = req.require_user()
+    if user.get("role") != "admin":
+        services.require_owner(int(pro_id), user["id"])
+    return services.set_photo(int(pro_id), req.body.get("photo"))
+
+
+@route("DELETE", "/api/pros/{pro_id}/photo")
+def delete_photo(req: Request, pro_id: str):
+    user = req.require_user()
+    if user.get("role") != "admin":
+        services.require_owner(int(pro_id), user["id"])
+    return services.clear_photo(int(pro_id))
+
+
+# ---------------- ניהול מערכת ----------------
+
+@route("GET", "/api/admin/stats")
+def admin_stats(req: Request):
+    req.require_admin()
+    return services.admin_stats()
+
+
+@route("GET", "/api/admin/pros")
+def admin_pros(req: Request):
+    req.require_admin()
+    return {"pros": services.admin_list_pros(
+        text=(req.q("q") or ""), status=(req.q("status") or "all"), limit=req.qi("limit", 200))}
+
+
+@route("PATCH", "/api/admin/pros/{pro_id}")
+def admin_patch_pro(req: Request, pro_id: str):
+    req.require_admin()
+    return services.admin_update_pro(int(pro_id), req.body)
+
+
+@route("DELETE", "/api/admin/pros/{pro_id}")
+def admin_delete_pro(req: Request, pro_id: str):
+    req.require_admin()
+    return services.admin_delete_pro(int(pro_id))
+
+
+@route("GET", "/api/admin/users")
+def admin_users(req: Request):
+    req.require_admin()
+    return {"users": services.admin_list_users(
+        text=(req.q("q") or ""), role=(req.q("role") or "all"), limit=req.qi("limit", 200))}
+
+
+@route("POST", "/api/admin/users/{user_id}/blocked")
+def admin_block_user(req: Request, user_id: str):
+    admin = req.require_admin()
+    return services.admin_set_blocked(int(user_id), bool(req.body.get("blocked")), admin["id"])
+
+
+@route("GET", "/api/admin/bookings")
+def admin_bookings(req: Request):
+    req.require_admin()
+    return {"bookings": services.admin_list_bookings(
+        status=(req.q("status") or "all"), limit=req.qi("limit", 200))}
+
+
+@route("GET", "/api/admin/reviews")
+def admin_reviews(req: Request):
+    req.require_admin()
+    return {"reviews": services.admin_list_reviews(
+        limit=req.qi("limit", 200), max_rating=req.qi("max_rating"))}
+
+
+@route("DELETE", "/api/admin/reviews/{review_id}")
+def admin_delete_review(req: Request, review_id: str):
+    req.require_admin()
+    return services.admin_delete_review(int(review_id))

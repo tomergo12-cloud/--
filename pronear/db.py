@@ -42,12 +42,42 @@ def close_conn() -> None:
         _local.conn = None
 
 
+# עמודות שנוספו אחרי גרסאות קודמות. SQLite לא תומך ב-IF NOT EXISTS ל-ALTER,
+# ולכן משווים מול PRAGMA table_info לפני כל הוספה.
+_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
+    ("users", "role", "TEXT NOT NULL DEFAULT 'client'"),
+    ("users", "blocked", "INTEGER NOT NULL DEFAULT 0"),
+    ("professionals", "photo", "TEXT NOT NULL DEFAULT ''"),
+)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, column, definition in _MIGRATIONS:
+        existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if not existing:          # הטבלה עדיין לא קיימת - הסכימה תיצור אותה מלאה
+            continue
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _backfill_roles(conn: sqlite3.Connection) -> None:
+    """משתמשים ותיקים שיש להם פרופיל מקצועי מסומנים כאנשי מקצוע."""
+    conn.execute(
+        "UPDATE users SET role='pro' WHERE role='client' "
+        "AND id IN (SELECT user_id FROM professionals)"
+    )
+
+
 def init_db(path: Optional[str] = None) -> None:
     with open(_SCHEMA_PATH, "r", encoding="utf-8") as fh:
         sql = fh.read()
     conn = connect(path) if path else get_conn()
     try:
+        # קודם השלמת עמודות חסרות במסד ותיק - אחרת אינדקסים שבסכימה
+        # מפנים לעמודות שעדיין לא קיימות; אחר כך יצירת מה שחסר לגמרי.
+        _migrate(conn)
         conn.executescript(sql)
+        _backfill_roles(conn)
     finally:
         if path:
             conn.close()

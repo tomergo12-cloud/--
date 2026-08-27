@@ -9,10 +9,10 @@ import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import api, config, db
+from . import api, config, db, timeutil as tu, uploads
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
-MAX_BODY = 1 << 20  # 1MB
+MAX_BODY = 6 << 20  # 6MB - תמונת פרופיל מגיעה כ-base64 בגוף הבקשה
 
 
 class RequestHandler(BaseHTTPRequestHandler):
@@ -50,6 +50,15 @@ class RequestHandler(BaseHTTPRequestHandler):
         return data
 
     # ----- קבצים סטטיים -----
+    def _serve_upload(self, path: str):
+        """הגשת תמונות שהועלו. resolve חוסם יציאה מתיקיית ההעלאות."""
+        target = uploads.resolve(path)
+        if target is None:
+            return self._json(404, {"error": "התמונה לא נמצאה"})
+        ctype = mimetypes.guess_type(target)[0] or "application/octet-stream"
+        with open(target, "rb") as fh:
+            self._send(200, fh.read(), ctype, {"Cache-Control": "public, max-age=31536000, immutable"})
+
     def _serve_static(self, path: str):
         rel = path.lstrip("/") or "index.html"
         target = os.path.normpath(os.path.join(WEB_DIR, rel))
@@ -69,7 +78,10 @@ class RequestHandler(BaseHTTPRequestHandler):
         path = self.path
         if not path.startswith("/api/"):
             if self.command in ("GET", "HEAD"):
-                return self._serve_static(path.split("?")[0])
+                clean = path.split("?")[0]
+                if clean.startswith(uploads.URL_PREFIX):
+                    return self._serve_upload(clean)
+                return self._serve_static(clean)
             return self._json(405, {"error": "המסלול לא נתמך"})
         try:
             body = self._read_body() if self.command in ("POST", "PUT", "PATCH") else {}
@@ -88,9 +100,18 @@ class RequestHandler(BaseHTTPRequestHandler):
         sys.stderr.write("%s - %s\n" % (self.log_date_time_string(), fmt % args))
 
 
+def preflight() -> None:
+    """בדיקות התקנה שעדיף להיכשל עליהן מיד, ולא בבקשה הראשונה של המשתמש."""
+    try:
+        tu.ensure_timezone()
+    except tu.TimezoneUnavailable as exc:
+        sys.exit(f"\nלא ניתן להפעיל את ProNear:\n{exc}\n")
+
+
 def serve(host: str = None, port: int = None):
     host = host or config.HOST
     port = port or config.PORT
+    preflight()
     db.init_db()
     httpd = ThreadingHTTPServer((host, port), RequestHandler)
     httpd.daemon_threads = True

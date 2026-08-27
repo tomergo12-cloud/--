@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional, Sequence
 
-from . import availability as av, config, db, geo, matching, security, timeutil as tu
+from . import availability as av, config, db, geo, matching, security, timeutil as tu, uploads
 
 
 class AppError(Exception):
@@ -25,10 +25,15 @@ PROFESSIONS = [
 
 BOOKING_STATUSES = ("pending", "confirmed", "declined", "cancelled", "done")
 
+# client = מזמין עבודות, pro = בעל פרופיל מקצועי, admin = ניהול המערכת.
+ROLES = ("client", "pro", "admin")
+PUBLIC_ROLES = ("client", "pro")     # התפקידים שאפשר להירשם אליהם מהאתר
+
 
 # ---------- משתמשים ----------
 
-def register_user(name: str, email: str, password: str, phone: str = "") -> dict:
+def register_user(name: str, email: str, password: str, phone: str = "",
+                  role: str = "client") -> dict:
     name = (name or "").strip()
     email = (email or "").strip().lower()
     if len(name) < 2:
@@ -37,11 +42,14 @@ def register_user(name: str, email: str, password: str, phone: str = "") -> dict
         raise AppError("כתובת אימייל לא תקינה", field="email")
     if len(password or "") < 8:
         raise AppError("סיסמה חייבת להכיל לפחות 8 תווים", field="password")
+    if role not in PUBLIC_ROLES:
+        # תפקיד מנהל לא נפתח מהאתר - רק דרך seed.py או create_admin
+        raise AppError("תפקיד לא תקין", field="role")
     if db.query_one("SELECT id FROM users WHERE email=?", (email,)):
         raise AppError("כתובת האימייל כבר רשומה במערכת", status=409, field="email")
     uid = db.insert(
-        "INSERT INTO users(name, email, phone, password_hash, created_at) VALUES (?,?,?,?,?)",
-        (name, email, (phone or "").strip(), security.hash_password(password), tu.now_ts()),
+        "INSERT INTO users(name, email, phone, password_hash, role, created_at) VALUES (?,?,?,?,?,?)",
+        (name, email, (phone or "").strip(), security.hash_password(password), role, tu.now_ts()),
     )
     return {"user": public_user(uid), **security.create_session(uid)}
 
@@ -50,17 +58,35 @@ def login(email: str, password: str) -> dict:
     row = db.query_one("SELECT * FROM users WHERE email=?", ((email or "").strip().lower(),))
     if row is None or not security.verify_password(password or "", row["password_hash"]):
         raise AppError("אימייל או סיסמה שגויים", status=401)
+    if row["blocked"]:
+        raise AppError("החשבון חסום. אפשר לפנות למנהל המערכת.", status=403)
     return {"user": public_user(row["id"]), **security.create_session(row["id"])}
 
 
+def create_admin(name: str, email: str, password: str, phone: str = "") -> dict:
+    """יצירת מנהל. לא נגיש מה-API - רק מתוך seed.py או סקריפט תחזוקה."""
+    account = register_user(name, email, password, phone, role="client")
+    db.execute("UPDATE users SET role='admin' WHERE id=?", (account["user"]["id"],))
+    account["user"] = public_user(account["user"]["id"])
+    return account
+
+
 def public_user(user_id: int) -> dict:
-    row = db.query_one("SELECT id, name, email, phone, created_at FROM users WHERE id=?", (user_id,))
+    row = db.query_one(
+        "SELECT id, name, email, phone, role, blocked, created_at FROM users WHERE id=?", (user_id,)
+    )
     if row is None:
         raise AppError("משתמש לא נמצא", status=404)
     user = dict(row)
+    user["blocked"] = bool(user["blocked"])
     pro = db.query_one("SELECT id FROM professionals WHERE user_id=?", (user_id,))
     user["pro_id"] = int(pro["id"]) if pro else None
     return user
+
+
+def require_admin(user: dict) -> None:
+    if (user or {}).get("role") != "admin":
+        raise AppError("הפעולה מותרת למנהלי המערכת בלבד", status=403)
 
 
 # ---------- אנשי מקצוע ----------
@@ -115,6 +141,8 @@ def upsert_professional(user_id: int, data: dict) -> dict:
         )
         if data.get("availability") is None:
             set_availability(pro_id, default_availability())
+    # מי שיצר פרופיל מקצועי הוא איש מקצוע לכל דבר (מנהל נשאר מנהל)
+    db.execute("UPDATE users SET role='pro' WHERE id=? AND role='client'", (user_id,))
     if data.get("availability") is not None:
         set_availability(pro_id, data["availability"])
     return get_professional(pro_id)
@@ -209,6 +237,7 @@ def get_professional(pro_id: int, viewer_id: Optional[int] = None) -> dict:
         "headline": pro["headline"],
         "bio": pro["bio"],
         "city": pro["city"],
+        "photo": pro["photo"],
         "lat": pro["lat"],
         "lng": pro["lng"],
         "service_radius_km": pro["service_radius_km"],
@@ -369,6 +398,7 @@ def search(
             "profession": row["profession"],
             "headline": row["headline"],
             "city": row["city"],
+            "photo": row["photo"],
             "lat": row["lat"],
             "lng": row["lng"],
             "hourly_rate": int(row["hourly_rate"]),
@@ -607,3 +637,220 @@ def add_review(user_id: int, booking_id: int, rating: int, comment: str = "") ->
     )
     return {"id": rid, "pro_id": int(row["pro_id"]), "rating": rating,
             "rating_summary": rating_of(int(row["pro_id"]))}
+
+
+# ---------- תמונת פרופיל ----------
+
+def set_photo(pro_id: int, data_url: str) -> dict:
+    """שמירת תמונת פרופיל חדשה, ומחיקת הקודמת אם איש מקצוע אחר לא משתמש בה."""
+    row = db.query_one("SELECT photo FROM professionals WHERE id=?", (pro_id,))
+    if row is None:
+        raise AppError("איש המקצוע לא נמצא", status=404)
+    try:
+        url = uploads.save(data_url, prefix=f"pro-{pro_id}")
+    except uploads.UploadError as exc:
+        raise AppError(str(exc), field="photo")
+    previous = row["photo"]
+    db.execute("UPDATE professionals SET photo=? WHERE id=?", (url, pro_id))
+    if previous and previous != url:
+        uploads.delete(previous)
+    return {"photo": url}
+
+
+def clear_photo(pro_id: int) -> dict:
+    row = db.query_one("SELECT photo FROM professionals WHERE id=?", (pro_id,))
+    if row is None:
+        raise AppError("איש המקצוע לא נמצא", status=404)
+    db.execute("UPDATE professionals SET photo='' WHERE id=?", (pro_id,))
+    uploads.delete(row["photo"])
+    return {"photo": ""}
+
+
+# ---------- ניהול מערכת ----------
+
+def admin_stats() -> dict:
+    now = tu.now_ts()
+    pros = db.query("SELECT id FROM professionals WHERE active=1")
+    available = sum(1 for r in pros if av.available_now(int(r["id"]), now))
+    one = lambda sql, params=(): int(db.query_one(sql, params)["c"] or 0)
+    avg_row = db.query_one("SELECT AVG(rating) AS a FROM reviews")
+    return {
+        "users": one("SELECT COUNT(*) AS c FROM users"),
+        "clients": one("SELECT COUNT(*) AS c FROM users WHERE role='client'"),
+        "pros_total": one("SELECT COUNT(*) AS c FROM professionals"),
+        "pros_active": len(pros),
+        "pros_verified": one("SELECT COUNT(*) AS c FROM professionals WHERE verified=1"),
+        "available_now": available,
+        "bookings": one("SELECT COUNT(*) AS c FROM bookings"),
+        "bookings_pending": one("SELECT COUNT(*) AS c FROM bookings WHERE status='pending'"),
+        "bookings_done": one("SELECT COUNT(*) AS c FROM bookings WHERE status='done'"),
+        "reviews": one("SELECT COUNT(*) AS c FROM reviews"),
+        "rating_avg": round(float(avg_row["a"]), 2) if avg_row["a"] is not None else None,
+        "blocked_users": one("SELECT COUNT(*) AS c FROM users WHERE blocked=1"),
+    }
+
+
+def admin_list_pros(text: str = "", status: str = "all", limit: int = 200) -> list[dict]:
+    sql = ("SELECT p.*, u.name AS user_name, u.email, u.phone, u.blocked "
+           "FROM professionals p JOIN users u ON u.id=p.user_id WHERE 1=1")
+    params: list[Any] = []
+    if text:
+        like = f"%{text.strip()}%"
+        sql += " AND (u.name LIKE ? OR u.email LIKE ? OR p.profession LIKE ? OR p.city LIKE ?)"
+        params.extend([like] * 4)
+    if status == "active":
+        sql += " AND p.active=1"
+    elif status == "inactive":
+        sql += " AND p.active=0"
+    elif status == "verified":
+        sql += " AND p.verified=1"
+    elif status == "unverified":
+        sql += " AND p.verified=0"
+    sql += " ORDER BY p.id DESC LIMIT ?"
+    params.append(max(1, min(int(limit), 500)))
+
+    out = []
+    for row in db.query(sql, params):
+        pro_id = int(row["id"])
+        rating = rating_of(pro_id)
+        out.append({
+            "id": pro_id,
+            "user_id": int(row["user_id"]),
+            "name": row["user_name"],
+            "email": row["email"],
+            "phone": row["phone"],
+            "profession": row["profession"],
+            "city": row["city"],
+            "headline": row["headline"],
+            "photo": row["photo"],
+            "hourly_rate": int(row["hourly_rate"]),
+            "service_radius_km": float(row["service_radius_km"]),
+            "years_experience": int(row["years_experience"]),
+            "verified": bool(row["verified"]),
+            "active": bool(row["active"]),
+            "blocked": bool(row["blocked"]),
+            "rating": rating,
+            "jobs_done": jobs_done(pro_id),
+            "available_now": av.available_now(pro_id),
+            "created_at": int(row["created_at"]),
+        })
+    return out
+
+
+def admin_update_pro(pro_id: int, data: dict) -> dict:
+    """עריכת שדות בודדים בפרופיל בידי מנהל, בלי לדרוש טופס מלא."""
+    allowed = {
+        "profession": lambda v: str(v).strip()[:80],
+        "headline": lambda v: str(v).strip()[:120],
+        "city": lambda v: str(v).strip()[:80],
+        "hourly_rate": lambda v: int(_num(v, "hourly_rate", 0, 100000)),
+        "service_radius_km": lambda v: _num(v, "service_radius_km", 0.5, config.MAX_RADIUS_KM),
+        "years_experience": lambda v: int(_num(v, "years_experience", 0, 70)),
+        "verified": lambda v: 1 if v else 0,
+        "active": lambda v: 1 if v else 0,
+        "emergency": lambda v: 1 if v else 0,
+    }
+    updates = {k: conv(data[k]) for k, conv in allowed.items() if k in data}
+    if not updates:
+        raise AppError("לא נשלחו שדות לעדכון")
+    if db.query_one("SELECT id FROM professionals WHERE id=?", (pro_id,)) is None:
+        raise AppError("איש המקצוע לא נמצא", status=404)
+    sets = ", ".join(f"{k}=?" for k in updates)
+    db.execute(f"UPDATE professionals SET {sets} WHERE id=?", (*updates.values(), pro_id))
+    return get_professional(pro_id)
+
+
+def admin_delete_pro(pro_id: int) -> dict:
+    row = db.query_one("SELECT photo FROM professionals WHERE id=?", (pro_id,))
+    if row is None:
+        raise AppError("איש המקצוע לא נמצא", status=404)
+    db.execute("DELETE FROM professionals WHERE id=?", (pro_id,))
+    uploads.delete(row["photo"])
+    return {"ok": True, "deleted": pro_id}
+
+
+def admin_list_users(text: str = "", role: str = "all", limit: int = 200) -> list[dict]:
+    sql = ("SELECT u.id, u.name, u.email, u.phone, u.role, u.blocked, u.created_at, "
+           "(SELECT id FROM professionals WHERE user_id=u.id) AS pro_id, "
+           "(SELECT COUNT(*) FROM bookings WHERE client_user_id=u.id) AS bookings "
+           "FROM users u WHERE 1=1")
+    params: list[Any] = []
+    if text:
+        like = f"%{text.strip()}%"
+        sql += " AND (u.name LIKE ? OR u.email LIKE ?)"
+        params.extend([like, like])
+    if role in ROLES:
+        sql += " AND u.role = ?"
+        params.append(role)
+    sql += " ORDER BY u.id DESC LIMIT ?"
+    params.append(max(1, min(int(limit), 500)))
+    return [
+        {"id": int(r["id"]), "name": r["name"], "email": r["email"], "phone": r["phone"],
+         "role": r["role"], "blocked": bool(r["blocked"]), "created_at": int(r["created_at"]),
+         "pro_id": int(r["pro_id"]) if r["pro_id"] else None, "bookings": int(r["bookings"])}
+        for r in db.query(sql, params)
+    ]
+
+
+def admin_set_blocked(user_id: int, blocked: bool, actor_id: int) -> dict:
+    row = db.query_one("SELECT role FROM users WHERE id=?", (user_id,))
+    if row is None:
+        raise AppError("משתמש לא נמצא", status=404)
+    if int(user_id) == int(actor_id):
+        raise AppError("אי אפשר לחסום את החשבון שממנו אתה מחובר")
+    if row["role"] == "admin":
+        raise AppError("אי אפשר לחסום מנהל מערכת")
+    db.execute("UPDATE users SET blocked=? WHERE id=?", (1 if blocked else 0, user_id))
+    if blocked:
+        db.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))   # ניתוק מיידי
+    return public_user(user_id)
+
+
+def admin_list_bookings(status: str = "all", limit: int = 200) -> list[dict]:
+    sql = ("SELECT b.*, p.profession, pu.name AS pro_name, cu.name AS client_name, "
+           "p.hourly_rate, p.currency FROM bookings b "
+           "JOIN professionals p ON p.id=b.pro_id JOIN users pu ON pu.id=p.user_id "
+           "JOIN users cu ON cu.id=b.client_user_id WHERE 1=1")
+    params: list[Any] = []
+    if status in BOOKING_STATUSES:
+        sql += " AND b.status=?"
+        params.append(status)
+    sql += " ORDER BY b.start_ts DESC LIMIT ?"
+    params.append(max(1, min(int(limit), 500)))
+    out = []
+    for r in db.query(sql, params):
+        minutes = (int(r["end_ts"]) - int(r["start_ts"])) // 60
+        out.append({
+            "id": int(r["id"]), "pro_id": int(r["pro_id"]), "pro_name": r["pro_name"],
+            "profession": r["profession"], "client_name": r["client_name"],
+            "start": int(r["start_ts"]), "start_iso": tu.to_iso(int(r["start_ts"])),
+            "duration_minutes": minutes, "status": r["status"], "address": r["address"],
+            "note": r["note"], "estimated_price": round(int(r["hourly_rate"]) * minutes / 60),
+        })
+    return out
+
+
+def admin_list_reviews(limit: int = 200, max_rating: Optional[int] = None) -> list[dict]:
+    sql = ("SELECT r.id, r.rating, r.comment, r.created_at, r.pro_id, "
+           "u.name AS client_name, pu.name AS pro_name, p.profession "
+           "FROM reviews r JOIN users u ON u.id=r.client_user_id "
+           "JOIN professionals p ON p.id=r.pro_id JOIN users pu ON pu.id=p.user_id WHERE 1=1")
+    params: list[Any] = []
+    if max_rating:
+        sql += " AND r.rating <= ?"
+        params.append(int(max_rating))
+    sql += " ORDER BY r.created_at DESC LIMIT ?"
+    params.append(max(1, min(int(limit), 500)))
+    return [
+        {"id": int(r["id"]), "pro_id": int(r["pro_id"]), "pro_name": r["pro_name"],
+         "profession": r["profession"], "client_name": r["client_name"],
+         "rating": int(r["rating"]), "comment": r["comment"], "created_at": int(r["created_at"])}
+        for r in db.query(sql, params)
+    ]
+
+
+def admin_delete_review(review_id: int) -> dict:
+    if db.query_one("SELECT id FROM reviews WHERE id=?", (review_id,)) is None:
+        raise AppError("הביקורת לא נמצאה", status=404)
+    db.execute("DELETE FROM reviews WHERE id=?", (review_id,))
+    return {"ok": True, "deleted": review_id}

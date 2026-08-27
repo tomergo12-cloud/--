@@ -51,7 +51,7 @@ def user_for_token(token: Optional[str]) -> Optional[dict]:
     if not token:
         return None
     row = db.query_one(
-        "SELECT u.id, u.name, u.email, u.phone, u.created_at, s.expires_at "
+        "SELECT u.id, u.name, u.email, u.phone, u.role, u.blocked, u.created_at, s.expires_at "
         "FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?",
         (token,),
     )
@@ -60,8 +60,13 @@ def user_for_token(token: Optional[str]) -> Optional[dict]:
     if int(row["expires_at"]) < tu.now_ts():
         db.execute("DELETE FROM sessions WHERE token=?", (token,))
         return None
+    if row["blocked"]:
+        # חשבון שנחסם מנותק מיד, גם אם הסשן עדיין בתוקף
+        db.execute("DELETE FROM sessions WHERE user_id=?", (row["id"],))
+        return None
     user = dict(row)
     user.pop("expires_at", None)
+    user["blocked"] = bool(user["blocked"])
     return user
 
 

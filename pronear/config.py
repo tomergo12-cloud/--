@@ -11,6 +11,9 @@ DEFAULT_LNG = float(os.environ.get("PRONEAR_DEFAULT_LNG", "34.7818"))
 
 DB_PATH = os.environ.get("PRONEAR_DB", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pronear.db"))
 
+# מפתח Google Maps JavaScript API. ריק = הממשק מציג מפה מקומית במקום.
+MAPS_KEY = os.environ.get("PRONEAR_MAPS_KEY", "").strip()
+
 HOST = os.environ.get("PRONEAR_HOST", "127.0.0.1")
 PORT = int(os.environ.get("PRONEAR_PORT", "8000"))
 
