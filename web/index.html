@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>קרוב | אנשי מקצוע פנויים לידך</title>
+<link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>📍</text></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <button class="brand" data-nav="search" type="button">
+      <span class="brand-pin">📍</span>
+      <span class="brand-text">קרוב<small>אנשי מקצוע פנויים לידך</small></span>
+    </button>
+
+    <button class="loc-chip" id="locChip" type="button" title="שינוי מיקום">
+      <span class="dot"></span><span id="locLabel">מאתר מיקום…</span>
+    </button>
+
+    <nav class="topnav">
+      <button class="ghost" data-nav="search" type="button">חיפוש</button>
+      <button class="ghost auth-only" data-nav="bookings" type="button">ההזמנות שלי<span class="badge hidden" id="bookingsBadge">0</span></button>
+      <button class="ghost auth-only" data-nav="dashboard" type="button">אזור אישי</button>
+      <button class="primary anon-only" id="loginBtn" type="button">כניסה</button>
+      <button class="ghost auth-only" id="logoutBtn" type="button">יציאה</button>
+    </nav>
+  </div>
+</header>
+
+<!-- ============ חיפוש ============ -->
+<section class="view" id="view-search">
+  <div class="hero">
+    <div class="wrap">
+      <h1>מי פנוי עכשיו <span class="accent">לידי?</span></h1>
+      <p class="sub">חיפוש לפי מרחק אמיתי, לוח זמינות חי ודירוגים — בלי טלפונים לחמישה בעלי מקצוע.</p>
+
+      <form class="searchbar" id="searchForm">
+        <div class="field grow">
+          <label for="qText">מה צריך?</label>
+          <input id="qText" type="search" placeholder="חשמלאי, נזילה, מזגן, מורה למתמטיקה…" autocomplete="off">
+          <div class="suggest hidden" id="suggest"></div>
+        </div>
+        <div class="field">
+          <label for="whenSel">מתי</label>
+          <select id="whenSel">
+            <option value="now">עכשיו</option>
+            <option value="soon">בקרוב (הכי מהר)</option>
+            <option value="at">בזמן מסוים</option>
+          </select>
+        </div>
+        <div class="field hidden" id="atField">
+          <label for="atInput">תאריך ושעה</label>
+          <input id="atInput" type="datetime-local">
+        </div>
+        <div class="field narrow">
+          <label for="radiusInput">רדיוס <b id="radiusVal">15</b> ק״מ</label>
+          <input id="radiusInput" type="range" min="1" max="60" value="15">
+        </div>
+        <button class="primary big" type="submit">חפש</button>
+      </form>
+
+      <div class="chips" id="professionChips"></div>
+
+      <details class="advanced">
+        <summary>סינון מתקדם</summary>
+        <div class="adv-grid">
+          <div class="field"><label for="durationSel">משך העבודה</label>
+            <select id="durationSel">
+              <option value="30">30 דקות</option>
+              <option value="60" selected>שעה</option>
+              <option value="120">שעתיים</option>
+              <option value="240">חצי יום</option>
+              <option value="480">יום עבודה</option>
+            </select></div>
+          <div class="field"><label for="maxRate">תקציב לשעה (₪)</label>
+            <input id="maxRate" type="number" min="0" step="10" placeholder="ללא הגבלה"></div>
+          <div class="field"><label for="minRating">דירוג מינימלי</label>
+            <select id="minRating">
+              <option value="">הכול</option><option value="3">3+</option>
+              <option value="4">4+</option><option value="4.5">4.5+</option>
+            </select></div>
+          <div class="field"><label for="sortSel">מיון</label>
+            <select id="sortSel">
+              <option value="match">התאמה כוללת</option>
+              <option value="soonest">הזמין ביותר</option>
+              <option value="distance">הקרוב ביותר</option>
+              <option value="rating">הדירוג הגבוה</option>
+              <option value="price">המחיר הזול</option>
+            </select></div>
+          <label class="check"><input type="checkbox" id="onlyNow"> רק פנויים ממש עכשיו</label>
+          <label class="check"><input type="checkbox" id="onlyVerified"> רק מאומתים</label>
+        </div>
+      </details>
+    </div>
+  </div>
+
+  <div class="wrap results-layout">
+    <div class="results-col">
+      <div class="results-head">
+        <h2 id="resultsTitle">תוצאות</h2>
+        <span class="muted" id="resultsMeta"></span>
+      </div>
+      <div id="results" class="results"></div>
+    </div>
+    <aside class="map-col">
+      <div class="map-card">
+        <div class="map-head"><b>מפת האזור</b><span class="muted" id="mapMeta"></span></div>
+        <svg id="map" viewBox="0 0 320 320" role="img" aria-label="מפת אנשי מקצוע באזור"></svg>
+        <div class="map-legend">
+          <span><i class="lg me"></i> אני</span>
+          <span><i class="lg free"></i> פנוי עכשיו</span>
+          <span><i class="lg busy"></i> פנוי מאוחר יותר</span>
+        </div>
+      </div>
+    </aside>
+  </div>
+</section>
+
+<!-- ============ הזמנות ============ -->
+<section class="view hidden" id="view-bookings">
+  <div class="wrap page">
+    <h1>ההזמנות שלי</h1>
+    <div class="tabs" id="bookingTabs">
+      <button class="tab active" data-role="client" type="button">כלקוח</button>
+      <button class="tab pro-only" data-role="pro" type="button">כאיש מקצוע</button>
+    </div>
+    <div id="bookingsList" class="bookings"></div>
+  </div>
+</section>
+
+<!-- ============ אזור אישי ============ -->
+<section class="view hidden" id="view-dashboard">
+  <div class="wrap page">
+    <h1>האזור האישי שלי</h1>
+    <p class="muted" id="dashIntro">כאן מגדירים את פרופיל איש המקצוע, לוח הזמינות השבועי וחסימות.</p>
+    <div class="dash-grid">
+      <section class="card">
+        <h2>פרופיל מקצועי</h2>
+        <form id="proForm" class="stack">
+          <div class="row">
+            <div class="field grow"><label for="pfProfession">מקצוע</label>
+              <input id="pfProfession" list="professionList" required placeholder="חשמלאי">
+              <datalist id="professionList"></datalist></div>
+            <div class="field grow"><label for="pfCity">עיר</label><input id="pfCity" placeholder="תל אביב"></div>
+          </div>
+          <div class="field"><label for="pfHeadline">כותרת</label>
+            <input id="pfHeadline" maxlength="120" placeholder="תקלות חשמל, לוחות ותאורה — הגעה מהירה"></div>
+          <div class="field"><label for="pfBio">עליי</label><textarea id="pfBio" rows="3"></textarea></div>
+          <div class="row">
+            <div class="field"><label for="pfRate">מחיר לשעה (₪)</label><input id="pfRate" type="number" min="0" step="10" value="200"></div>
+            <div class="field"><label for="pfRadius">רדיוס שירות (ק״מ)</label><input id="pfRadius" type="number" min="1" max="200" value="15"></div>
+            <div class="field"><label for="pfMin">מינימום הזמנה (דק׳)</label><input id="pfMin" type="number" min="15" max="480" step="15" value="60"></div>
+            <div class="field"><label for="pfYears">שנות ניסיון</label><input id="pfYears" type="number" min="0" max="70" value="5"></div>
+          </div>
+          <div class="field"><label for="pfTags">תגיות (מופרדות בפסיק)</label><input id="pfTags" placeholder="תקלות,לוח חשמל,תאורה"></div>
+          <div class="row between">
+            <label class="check"><input type="checkbox" id="pfEmergency"> זמין גם לקריאות חירום</label>
+            <label class="check"><input type="checkbox" id="pfActive" checked> הפרופיל פעיל בחיפוש</label>
+          </div>
+          <div class="field"><label>מיקום בסיס</label>
+            <div class="row">
+              <input id="pfLat" type="number" step="0.0001" placeholder="קו רוחב" required>
+              <input id="pfLng" type="number" step="0.0001" placeholder="קו אורך" required>
+              <button type="button" class="ghost" id="useMyLoc">השתמש במיקום שלי</button>
+            </div></div>
+          <button class="primary" type="submit">שמירת פרופיל</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>לוח זמינות שבועי</h2>
+        <p class="muted small">כאן קובעים מתי אתם זמינים. המערכת מחסירה אוטומטית הזמנות וחסימות.</p>
+        <div id="availEditor" class="avail-editor"></div>
+        <button class="primary" id="saveAvail" type="button">שמירת לוח</button>
+
+        <h2 class="mt">חסימות זמן</h2>
+        <form id="timeOffForm" class="row wrap-row">
+          <input type="datetime-local" id="offStart" required>
+          <input type="datetime-local" id="offEnd" required>
+          <input type="text" id="offReason" placeholder="סיבה (אופציונלי)">
+          <button class="ghost" type="submit">הוספה</button>
+        </form>
+        <ul id="timeOffList" class="off-list"></ul>
+      </section>
+    </div>
+  </div>
+</section>
+
+<div class="overlay hidden" id="overlay"><div class="modal" id="modal"></div></div>
+<div class="toasts" id="toasts"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>
