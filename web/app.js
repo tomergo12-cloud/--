@@ -129,7 +129,21 @@ async function refreshMe() {
     localStorage.removeItem('pronear_token');
   }
   applyRoleUI();
-  if (state.user) refreshBookingsBadge();
+  if (state.user) { refreshBookingsBadge(); refreshChatBadge(); }
+}
+
+function setChatBadge(count) {
+  const badge = $('#chatBadge');
+  badge.textContent = count;
+  badge.classList.toggle('hidden', !count);
+}
+
+async function refreshChatBadge() {
+  if (!state.user) return;
+  try {
+    const data = await api('/api/conversations');
+    setChatBadge(data.unread);
+  } catch (_) {}
 }
 
 async function refreshBookingsBadge() {
@@ -224,6 +238,8 @@ $('#logoutBtn').onclick = async () => {
   try { await api('/api/auth/logout', { method: 'POST' }); } catch (_) {}
   state.token = null; state.user = null; state.professional = null;
   localStorage.removeItem('pronear_token');
+  Chat.close();
+  setChatBadge(0);
   applyRoleUI();
   show('login');
   toast('התנתקת');
@@ -427,13 +443,21 @@ async function openProfile(proId) {
       <p class="small">${pro.availability.length
         ? pro.availability.map((a) => `${esc(a.weekday_name)} ${a.start}–${a.end}`).join(' · ')
         : 'לא הוגדר לוח'}</p>
-      <button class="primary big" id="pfBook" type="button" style="margin:14px 0">בחירת מועד והזמנה</button>
+      <div class="row" style="margin:14px 0">
+        <button class="primary big" id="pfBook" type="button">בחירת מועד והזמנה</button>
+        <button class="ghost" id="pfChat" type="button">שליחת הודעה</button>
+      </div>
       <h3 class="sec-label">ביקורות (${pro.rating.count})</h3>
       ${pro.reviews.length ? pro.reviews.map((r) => `
         <div class="review"><b>${esc(r.name)}</b> ${stars(r.rating)}
           <div class="muted small">${esc(r.comment)}</div></div>`).join('')
         : '<p class="muted small">אין עדיין ביקורות.</p>'}`);
     $('#pfBook').onclick = () => openBooking(proId);
+    $('#pfChat').onclick = () => {
+      if (!state.user) return show('login');
+      closeModal();
+      Chat.openFor({ proId, name: pro.name });
+    };
   } catch (err) {
     openModal(`<h2>שגיאה</h2><p class="err">${esc(err.message)}</p>`);
   }
@@ -542,6 +566,8 @@ async function loadBookings() {
       if (b.role === 'client' && b.status === 'done' && !b.reviewed) {
         actions.push(`<button class="ghost" data-review="${b.id}" type="button">כתיבת ביקורת</button>`);
       }
+      actions.push(`<button class="ghost" data-chat="${b.id}" data-name="${esc(
+        b.role === 'client' ? b.pro_name : b.client_name)}" type="button">צ׳אט</button>`);
       return `<article class="card booking">
         <div>
           <b>${who}</b>
@@ -566,6 +592,8 @@ async function loadBookings() {
       } catch (err) { toast(err.message, 'bad'); btn.disabled = false; }
     });
     $$('[data-review]', box).forEach((btn) => btn.onclick = () => openReview(+btn.dataset.review));
+    $$('[data-chat]', box).forEach((btn) => btn.onclick = () =>
+      Chat.openFor({ bookingId: +btn.dataset.chat, name: btn.dataset.name }));
   } catch (err) {
     box.innerHTML = `<div class="empty">${esc(err.message)}</div>`;
   }
@@ -779,6 +807,7 @@ const ADMIN_FILTERS = {
   bookings: [['all', 'כל הסטטוסים'], ['pending', 'ממתין'], ['confirmed', 'מאושר'],
              ['done', 'הושלם'], ['cancelled', 'בוטל'], ['declined', 'נדחה']],
   reviews: [['', 'כל הביקורות'], ['3', '3 כוכבים ומטה'], ['2', '2 כוכבים ומטה']],
+  chats: [['', 'כל השיחות']],
 };
 
 async function loadAdmin() {
@@ -867,6 +896,20 @@ async function loadAdminTable() {
           `<span class="status ${b.status}">${STATUS_TEXT[b.status] || b.status}</span>`,
         ]));
 
+    } else if (state.adminTab === 'chats') {
+      const { conversations } = await api('/api/admin/conversations');
+      body.innerHTML = adminTable(
+        ['לקוח', 'איש מקצוע', 'הודעות', 'אחרונה', 'עודכן', ''],
+        conversations.map((c) => [
+          `<b>${esc(c.client_name)}</b><div class="muted small">${esc(c.client_email)}</div>`,
+          `<b>${esc(c.pro_name)}</b> · ${esc(c.profession)}
+           <div class="muted small">${esc(c.pro_email)}</div>`,
+          `<span class="num">${c.messages}</span>`,
+          esc(c.last_body.slice(0, 60)), esc(fmtWhen(c.last_message_at)),
+          `<button class="link" data-conv="${c.id}" type="button">קריאה</button>`,
+        ]));
+      $$('[data-conv]', body).forEach((btn) => btn.onclick = () => openAdminChat(+btn.dataset.conv));
+
     } else {
       const { reviews } = await api(`/api/admin/reviews?max_rating=${filter}`);
       body.innerHTML = adminTable(
@@ -896,6 +939,25 @@ function adminTable(headers, rows) {
     <thead><tr>${headers.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
     <tbody>${rows.map((cells) => `<tr>${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody>
   </table>`;
+}
+
+async function openAdminChat(conversationId) {
+  openModal('<p class="muted">טוען…</p>');
+  try {
+    const conv = await api('/api/admin/conversations/' + conversationId);
+    openModal(`
+      <h2>שיחה: ${esc(conv.client_name)} ו${esc(conv.pro_name)}</h2>
+      <p class="muted small">תצוגה בלבד — מנהל אינו יכול לכתוב בשיחה.</p>
+      <div class="admin-chat">
+        ${conv.messages.map((m) => `
+          <div class="bubble ${m.from_pro ? 'theirs' : 'mine'}">
+            <div class="bubble-body">${esc(m.body)}</div>
+            <div class="bubble-meta">${esc(m.sender_name)} · ${esc(fmtWhen(m.created_at))}</div>
+          </div>`).join('') || '<p class="muted">אין הודעות.</p>'}
+      </div>`);
+  } catch (err) {
+    openModal(`<h2>שגיאה</h2><p class="err">${esc(err.message)}</p>`);
+  }
 }
 
 function openAdminEditor(pro) {
@@ -991,6 +1053,8 @@ function wireSearchControls() {
 
 async function init() {
   wireSearchControls();
+  Chat.build(api, setChatBadge);
+  $('#chatBtn').onclick = () => { if (state.user) Chat.openInbox(); else show('login'); };
   renderAuth();
   try {
     state.meta = await api('/api/meta');
@@ -1004,6 +1068,8 @@ async function init() {
   renderCategories();
   await refreshMe();
   show(state.user ? (VIEW_FOR_ROLE[state.user.role] || 'home') : 'login');
+  // רענון עדין של המונה כשהצ'אט סגור
+  setInterval(() => { if (state.user) refreshChatBadge(); }, 30000);
 }
 
 init();

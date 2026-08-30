@@ -92,3 +92,27 @@ CREATE TABLE IF NOT EXISTS reviews (
     created_at     INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_reviews_pro ON reviews(pro_id);
+
+-- שיחה אחת לכל צמד לקוח-איש מקצוע. booking_id הוא ההקשר שממנו היא נפתחה.
+CREATE TABLE IF NOT EXISTS conversations (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    pro_id          INTEGER NOT NULL REFERENCES professionals(id) ON DELETE CASCADE,
+    client_user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    booking_id      INTEGER REFERENCES bookings(id) ON DELETE SET NULL,
+    created_at      INTEGER NOT NULL,
+    last_message_at INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (pro_id, client_user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_conv_client ON conversations(client_user_id, last_message_at DESC);
+CREATE INDEX IF NOT EXISTS idx_conv_pro ON conversations(pro_id, last_message_at DESC);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    sender_user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body            TEXT    NOT NULL,
+    created_at      INTEGER NOT NULL,
+    read_at         INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id, id);
+CREATE INDEX IF NOT EXISTS idx_msg_unread ON messages(conversation_id, sender_user_id, read_at);

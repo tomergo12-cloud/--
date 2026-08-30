@@ -29,7 +29,11 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.send_header(key, value)
         self.end_headers()
         if self.command != "HEAD":
-            self.wfile.write(body)
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                # לקוח שסגר לשונית באמצע המתנה ארוכה של הצ'אט - לא שגיאה
+                pass
 
     def _json(self, status: int, payload):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

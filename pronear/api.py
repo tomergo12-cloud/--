@@ -7,7 +7,7 @@ import re
 from typing import Callable, Optional
 from urllib.parse import parse_qs, urlparse
 
-from . import availability as av, config, db, security, services, timeutil as tu
+from . import availability as av, chat, config, db, security, services, timeutil as tu
 from .services import AppError
 
 Handler = Callable[["Request"], object]
@@ -378,3 +378,53 @@ def admin_reviews(req: Request):
 def admin_delete_review(req: Request, review_id: str):
     req.require_admin()
     return services.admin_delete_review(int(review_id))
+
+
+# ---------------- צ'אט ----------------
+
+@route("POST", "/api/conversations")
+def post_conversation(req: Request):
+    user = req.require_user()
+    if req.body.get("booking_id"):
+        return 201, chat.conversation_for_booking(user, int(req.body["booking_id"]))
+    if not req.body.get("pro_id"):
+        raise AppError("חסר מזהה איש מקצוע או הזמנה", field="pro_id")
+    return 201, chat.open_conversation(user, int(req.body["pro_id"]),
+                                       req.body.get("booking_id"))
+
+
+@route("GET", "/api/conversations")
+def get_conversations(req: Request):
+    user = req.require_user()
+    return {"conversations": chat.list_conversations(user), "unread": chat.unread_total(user)}
+
+
+@route("GET", "/api/conversations/{conversation_id}")
+def get_conversation(req: Request, conversation_id: str):
+    user = req.require_user()
+    return chat.conversation_view(int(conversation_id), user)
+
+
+@route("GET", "/api/conversations/{conversation_id}/messages")
+def get_messages(req: Request, conversation_id: str):
+    user = req.require_user()
+    return chat.fetch_messages(user, int(conversation_id),
+                               after_id=req.qi("after", 0), wait=req.qb("wait"))
+
+
+@route("POST", "/api/conversations/{conversation_id}/messages")
+def post_message(req: Request, conversation_id: str):
+    user = req.require_user()
+    return 201, chat.send_message(user, int(conversation_id), req.body.get("body"))
+
+
+@route("GET", "/api/admin/conversations")
+def admin_conversations(req: Request):
+    req.require_admin()
+    return {"conversations": chat.admin_list_conversations(limit=req.qi("limit", 100))}
+
+
+@route("GET", "/api/admin/conversations/{conversation_id}")
+def admin_conversation(req: Request, conversation_id: str):
+    req.require_admin()
+    return chat.admin_read_conversation(int(conversation_id))
