@@ -807,8 +807,8 @@ def admin_set_blocked(user_id: int, blocked: bool, actor_id: int) -> dict:
 
 
 def admin_list_bookings(status: str = "all", limit: int = 200) -> list[dict]:
-    sql = ("SELECT b.*, p.profession, pu.name AS pro_name, cu.name AS client_name, "
-           "p.hourly_rate, p.currency FROM bookings b "
+    sql = ("SELECT b.*, p.profession, pu.name AS pro_name, pu.email AS pro_email, "
+           "cu.name AS client_name, cu.email AS client_email, p.hourly_rate, p.currency FROM bookings b "
            "JOIN professionals p ON p.id=b.pro_id JOIN users pu ON pu.id=p.user_id "
            "JOIN users cu ON cu.id=b.client_user_id WHERE 1=1")
     params: list[Any] = []
@@ -822,7 +822,8 @@ def admin_list_bookings(status: str = "all", limit: int = 200) -> list[dict]:
         minutes = (int(r["end_ts"]) - int(r["start_ts"])) // 60
         out.append({
             "id": int(r["id"]), "pro_id": int(r["pro_id"]), "pro_name": r["pro_name"],
-            "profession": r["profession"], "client_name": r["client_name"],
+            "pro_email": r["pro_email"], "profession": r["profession"],
+            "client_name": r["client_name"], "client_email": r["client_email"],
             "start": int(r["start_ts"]), "start_iso": tu.to_iso(int(r["start_ts"])),
             "duration_minutes": minutes, "status": r["status"], "address": r["address"],
             "note": r["note"], "estimated_price": round(int(r["hourly_rate"]) * minutes / 60),

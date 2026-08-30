@@ -89,7 +89,14 @@ function show(view) {
   if (target) target.classList.remove('hidden');
   window.scrollTo({ top: 0 });
   if (view === 'home') ensureMap().then(runSearch);
-  if (view === 'bookings') loadBookings();
+  if (view === 'bookings') {
+    // איש מקצוע מגיע לכאן בשביל הבקשות שקיבל - לא בשביל מה שהוא עצמו הזמין
+    const isPro = state.user && (state.user.role === 'pro' || state.user.pro_id);
+    state.bookingRole = isPro ? 'pro' : 'client';
+    $$('#bookingTabs .tab').forEach((t) =>
+      t.classList.toggle('active', t.dataset.role === state.bookingRole));
+    loadBookings();
+  }
   if (view === 'dashboard') loadDashboard();
   if (view === 'admin') loadAdmin();
 }
@@ -852,7 +859,9 @@ async function loadAdminTable() {
       body.innerHTML = adminTable(
         ['לקוח', 'איש מקצוע', 'מועד', 'משך', 'כתובת', 'מחיר', 'סטטוס'],
         bookings.map((b) => [
-          esc(b.client_name), `${esc(b.pro_name)} · ${esc(b.profession)}`,
+          `<b>${esc(b.client_name)}</b><div class="muted small">${esc(b.client_email)}</div>`,
+          `<b>${esc(b.pro_name)}</b> · ${esc(b.profession)}
+           <div class="muted small">${esc(b.pro_email)}</div>`,
           esc(fmtWhen(b.start)), `${b.duration_minutes} דק׳`, esc(b.address || '—'),
           `<span class="num">${money(b.estimated_price)}</span>`,
           `<span class="status ${b.status}">${STATUS_TEXT[b.status] || b.status}</span>`,
